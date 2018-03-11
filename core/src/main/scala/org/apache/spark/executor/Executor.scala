@@ -28,11 +28,14 @@ import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, HashMap, Map}
+import scala.util.control.Breaks
 import scala.util.control.NonFatal
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder
+import sys.process._
 
 import org.apache.spark._
+import org.apache.spark.SparkContext._
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.{SparkOutOfMemoryError, TaskMemoryManager}
@@ -60,14 +63,13 @@ private[spark] class Executor(
   extends Logging {
 
   logInfo(s"Starting executor ID $executorId on host $executorHostname")
-
+  // logInfo("hee hee hee ")
+  GetCoreNumber()
   // Application dependencies (added through SparkContext) that we've fetched so far on this node.
   // Each map holds the master's timestamp for the version of that file or JAR we got.
   private val currentFiles: HashMap[String, Long] = new HashMap[String, Long]()
   private val currentJars: HashMap[String, Long] = new HashMap[String, Long]()
-
   private val EMPTY_BYTE_BUFFER = ByteBuffer.wrap(new Array[Byte](0))
-
   private val conf = env.conf
 
   // No ip or host:port - just hostname
@@ -202,6 +204,23 @@ private[spark] class Executor(
       }
     }
   }
+
+  // begin custom code here
+  private def GetCoreNumber(): Unit = {
+    val arr = "jps".!!.split('\n')
+    var procnum: String = null;
+    for (i <- 0 to arr.length-1)
+    {
+      if (arr(i).contains("SparkSubmit"))
+      {
+        procnum = arr(i).split(' ')(0)
+      }
+    }
+    val cmd = "ps -o psr -p ".concat(procnum)
+    var corenum = (cmd #| "awk FNR==2").!!.trim()
+    logInfo(s"and this is executing in core number:$corenum")
+  }
+  // end custom code here
 
   /**
    * Function to kill the running tasks in an executor.
@@ -823,3 +842,4 @@ private[spark] object Executor {
   // used instead.
   val taskDeserializationProps: ThreadLocal[Properties] = new ThreadLocal[Properties]
 }
+
