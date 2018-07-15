@@ -18,6 +18,7 @@
 package org.apache.spark.executor
 
 import java.io.{File, NotSerializableException}
+import java.lang.{Integer, String}
 import java.lang.Thread.UncaughtExceptionHandler
 import java.lang.management.ManagementFactory
 import java.net.{URI, URL}
@@ -63,14 +64,24 @@ private[spark] class Executor(
   extends Logging {
 
   logInfo(s"Starting executor ID $executorId on host $executorHostname")
+<<<<<<< HEAD
+=======
   // logInfo("hee hee hee ")
   GetCoreNumber()
+>>>>>>> f60e4a2d94fe07406121098794c5d731ef57268d
   // Application dependencies (added through SparkContext) that we've fetched so far on this node.
   // Each map holds the master's timestamp for the version of that file or JAR we got.
+  // private var coreNum: Int = 0
+
+  // var previousStageId: Int = 0
   private val currentFiles: HashMap[String, Long] = new HashMap[String, Long]()
   private val currentJars: HashMap[String, Long] = new HashMap[String, Long]()
   private val EMPTY_BYTE_BUFFER = ByteBuffer.wrap(new Array[Byte](0))
   private val conf = env.conf
+
+  var stageIdToTaskCoreMap: HashMap[Int, HashMap[Long, String]] =
+    new  HashMap[Int, HashMap[Long, String]]// .withDefaultValue("Not there")
+  // var taskToCoreMap: HashMap[Long, String] = new HashMap[Long, String]()
 
   // No ip or host:port - just hostname
   Utils.checkHost(executorHostname)
@@ -175,6 +186,8 @@ private[spark] class Executor(
 
   def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit = {
     val tr = new TaskRunner(context, taskDescription)
+    // GetCoreNumber()
+
     runningTasks.put(taskDescription.taskId, tr)
     threadPool.execute(tr)
   }
@@ -204,7 +217,157 @@ private[spark] class Executor(
       }
     }
   }
+  def pinToACore(taskId: Long): Unit = {
+    var coreNum = taskId%4
+    // logInfo(s"Now pinning threadId:$threadId to core:$coreNum")
+    // var printmsg = "/home/adarshiyengar/Desktop/pin-tid-to-core.sh ".concat(threadId.toString)
+    // printmsg = printmsg.concat(" ").concat((coreNum).toString).!!
+    logInfo(s"We will pin $taskId on core $coreNum ")
+    "taskset -p -c ".concat(coreNum.toString).concat(" ").concat(convertTaskToThread(taskId)).!
+    // logInfo(printmsg)
+    // coreNum = (coreNum + 1)%4
+  }
+  def pinToRandomCores(taskId: Long): Unit = {
+    val cores = Runtime.getRuntime().availableProcessors()
+    val random = new scala.util.Random
+    var randomlyChosenCore = random.nextInt(cores)
+    "taskset -p -c ".concat(randomlyChosenCore.toString).concat(" ")
+    .concat(convertTaskToThread(taskId)).!
+  }
+  def pinToSameCore(coreNum: String, taskId: Long): Unit = {
+    // logInfo(s"$taskId ran on is $coreNum and we'll try to run on the same\n")
+    "taskset -p -c ".concat(coreNum).concat(" ").concat(convertTaskToThread(taskId)).!
+  }
+  def pinToAlternativeCore(coreNumOfPreviousRunTask: String, taskId: Long) {
+    // logInfo(s"$taskId ran on is $coreNumOfPreviousRunTask and we'll try NOT to on the same\n")
+    val cores = Runtime.getRuntime().availableProcessors()
+    val random = new scala.util.Random
+    // generate a random core core number except that one and pin to that
+    var randomlyChosenCore = random.nextInt(cores)
+    val processnum = ManagementFactory.getRuntimeMXBean().getName().split("@")(0)
+    val cmd = "ps -o psr -p ".concat(processnum)
+    var coreNumOfMain = (cmd #| "awk FNR==2").!!.trim()
+    logInfo(s"the core that the main method is running is $coreNumOfMain")
+    while (cores <3 || randomlyChosenCore.toString == coreNumOfMain ||
+     randomlyChosenCore.toString == coreNumOfPreviousRunTask)
+    {
+      randomlyChosenCore = random.nextInt(cores)
+    }
+    logInfo(s"we have randomly chosen to run on $randomlyChosenCore")
+    "taskset -p -c ".concat(randomlyChosenCore.toString).concat(" ")
+    .concat(convertTaskToThread(taskId)).!
+  }
+  def getCoreNumber(taskId: Long) : String = {
+    // val processnum = ("jps" #| "grep SparkSubmit").!!.split(" ")
+    val processnum = ManagementFactory.getRuntimeMXBean().getName().split("@")(0)
+    val str = "Executor task launch worker for task ".concat(taskId.toString)
+    val cmd1 = "jstack ".concat(processnum)
+    val arrayOfStrings = cmd1.!!.split("\n")
+    var relevantString : String = null
+    var returnvalue : String = null
+    var threaddetails: Int = -1;
+    for (i <- 0 to arrayOfStrings.length-1) {
+      if (arrayOfStrings(i).contains(str)) {
+        relevantString = arrayOfStrings(i)
+      }
+    }
+    if (relevantString == null) {
+       logError("Could not find the required JVM thread information")
+    }
+    else {
+      val arrayOfInfo = relevantString.split(" ")
+      for (i <- 0 to arrayOfInfo.length-1) {
+        if (arrayOfInfo(i).contains("nid"))
+        {
+          threaddetails = Integer.parseInt( arrayOfInfo(i).split("=")(1).substring(2), 16)
+        }
+      }
+      if (threaddetails < 0) {
+        logError("No such field nid found")
+      }
+      else {
+        // we now have the thread number and process number
+        // this format may change. currently: /proc/[pid]/task/[tid]/stat
+        val cmd3 = "cat ".concat("/proc/").concat(processnum).concat("/task/")
+        val cmd4 = cmd3.concat(threaddetails.toString).concat("/stat")
+        val coredump = cmd4.!!.split(" ")
+        returnvalue = coredump(coredump.length-14)
+      }
+    }
+    return returnvalue
+  }
 
+<<<<<<< HEAD
+  def convertTaskToThread(taskId: Long) : String = {
+    val processnum = ManagementFactory.getRuntimeMXBean().getName().split("@")(0)
+    val str = "Executor task launch worker for task ".concat(taskId.toString)
+    val cmd1 = "jstack ".concat(processnum)
+    val arrayOfStrings = cmd1.!!.split("\n")
+    var threaddetails: Int = -1;
+    var relevantString : String = null
+    for (i <- 0 to arrayOfStrings.length-1) {
+      if (arrayOfStrings(i).contains(str)) {
+        relevantString = arrayOfStrings(i)
+      }
+    }
+    if (relevantString == null) {
+       logError("Could not find the required JVM thread information")
+    }
+    else {
+      val arrayOfInfo = relevantString.split(" ")
+      for (i <- 0 to arrayOfInfo.length-1) {
+        if (arrayOfInfo(i).contains("nid"))
+        {
+          threaddetails = Integer.parseInt( arrayOfInfo(i).split("=")(1).substring(2), 16)
+        }
+      }
+      if (threaddetails < 0) {
+        logError("No such field nid found")
+      }
+    }
+    return threaddetails.toString
+  }
+  // def pinTidToCore(threadId: Long, coreNum: Int): Unit = {
+  //   val processnum = ("jps" #| "grep SparkSubmit").!!.split(" ")(0)
+  //   val threaddetails = ( Seq("jstack" ,processnum) #| "grep Executor task" #|
+  // Seq("grep","#" + threadId) #| "tr '\n' ' '").!!.trim()
+  //   val jvmthreadid = (Seq("echo" , threaddetails)
+  // #| grep -Po 'nid=\K[^ ]+' #| "tr '\n' ' '").!!.trim()
+  //   val pid = (Seq("((", jvmthreadid , "))")).!!
+  //   Seq("taskset", "-p" ,"-c" , taskId, pid).!!
+  // }
+  // begin custom code here
+  // private def GetCoreNumber(): Unit = {
+  //   val arr = "jps".!!.split('\n')
+  //   var procnum: String = null;
+  //   for (i <- 0 to arr.length-1)
+  //   {
+  //     if (arr(i).contains("SparkSubmit"))
+  //     {
+  //       procnum = arr(i).split(' ')(0)
+  //     }
+  //   }
+  //   val cmd = "ps -o psr -p ".concat(procnum)
+  //   var corenum = (cmd #| "awk FNR==2").!!.trim()
+  //   logInfo(s"and this is executing in core number:$corenum")
+  // }
+  // end custom code here
+  // def GetSparkProcessNumber() : Int = {
+  //   val arr = "jps".!!.split('\n')
+  //   var procnum: String = null;
+  //   for (i <- 0 to arr.length-1)
+  //   {
+  //     if (arr(i).contains("SparkSubmit"))
+  //     {
+  //       return arr(i).split(' ')(0)
+  //     }
+  //   }
+  //   return 0
+  // }
+  // def GetCoreNumber(threadID: Long) : Unit = {
+  //   var procnum: String = GetSparkProcessNumber();
+  // }
+=======
   // begin custom code here
   private def GetCoreNumber(): Unit = {
     val arr = "jps".!!.split('\n')
@@ -222,6 +385,7 @@ private[spark] class Executor(
   }
   // end custom code here
 
+>>>>>>> f60e4a2d94fe07406121098794c5d731ef57268d
   /**
    * Function to kill the running tasks in an executor.
    * This can be called by executor back-ends to kill the
@@ -254,10 +418,13 @@ private[spark] class Executor(
     extends Runnable {
 
     val taskId = taskDescription.taskId
-    val threadName = s"Executor task launch worker for task $taskId"
+    val stageId = taskDescription.stageId
+    val threadName = s"Executor task launch worker for task $taskId and for stage $stageId"
     private val taskName = taskDescription.name
 
-    /** If specified, this task has been killed and this option contains the reason. */
+    /** If specified, this task has been killed and this optionA sample Map
+    To get started with our examples, let's create a simple Map we can work with:
+    contains the reason. */
     @volatile private var reasonIfKilled: Option[String] = None
 
     @volatile private var threadId: Long = -1
@@ -312,12 +479,98 @@ private[spark] class Executor(
       val threadMXBean = ManagementFactory.getThreadMXBean
       val taskMemoryManager = new TaskMemoryManager(env.memoryManager, taskId)
       val deserializeStartTime = System.currentTimeMillis()
+      // am inserting this below just to check whether my code causes deadlocking
+      // val threadIds = threadMXBean.findDeadlockedThreads()
+      // if (threadIds.length > 0) {
+      //   for (i <- 0 to threadIds.length -1 ) {
+      //     logInfo(s"deadlocked thread: $i")
+      //   }
+      // }
       val deserializeStartCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
         threadMXBean.getCurrentThreadCpuTime
       } else 0L
       Thread.currentThread.setContextClassLoader(replClassLoader)
       val ser = env.closureSerializer.newInstance()
-      logInfo(s"Running $taskName (TID $taskId)")
+
+
+      // SCENARIO 1 : Pinning in a round robin fashion
+      // NOTE that even though taskId need not be necessarily sent as parameter, it is necessary
+      // because of the parallel nature of threads , i.e. at the time when a taskId's run() method
+      // is running, when we try to access the taskId in the pinToSameCore function,
+      // it may be different leading to unexpected behaviour.
+      // logInfo(s"Custom Log: Running $taskName (TID $taskId) and threadID $threadId")
+      // logInfo(" Pinning Thread to a Specific Core now based on what the taskId is")
+      // logInfo("Since impose an order on the affinities, this is expected be much slower")
+      // logInfo("Can cause a deadlock as locks acquired for these and probably not be released")
+      // pinToACore(taskId)
+
+      // SCENARIO 2: Pinning to any random core
+      // what can be inferred from our experiments, is that as soon we try to 'pin' a task, it will
+      // invariably become slower. This is because we will try to impose an order on the natural
+      // flow of execution Although we are doing this only to get a possible speedup from hot cache,
+      // how much of it is still in question. The original Spark will just create a bunch of threads
+      // and submit to JVM which will give it to the OS.
+      // logInfo(s"Custom Log: Running $taskName (TID $taskId) and threadID $threadId")
+      // logInfo(" Pinning Thread to any available Random Core")
+      // logInfo("Maybe Core that has been chosen may be busy and hence be expected to be slower")
+      // logInfo("Can cause a deadlock as locks acquired for these and probably not be released")
+      // pinToRandomCores(taskId)
+
+      // SCENARIO 3: Checking the difference in times of execution
+      // Every little speedup possible can help improve performance
+      // Here when we wrote a shell script to go through the JVM and Core dumps
+      // We also wrote a function here that uses system calls to do the same
+      // our guess was that the former would create another process ( exec the commands)
+      // whereas the latter would only use threads, which would be faster
+      // val t0 = System.nanoTime()
+      // stageIdToTaskCoreMap += (stageId -> scala.collection.mutable.HashMap
+      //   (taskId -> "/home/adarshiyengar/Desktop/get-core-number.sh ".concat(taskId.toString).!!))
+      // val t1 = System.nanoTime()
+      // val t2 = System.nanoTime()
+      // stageIdToTaskCoreMap += (stageId -> scala.collection.mutable.HashMap
+      //   (taskId -> getCoreNumber(taskId)))
+      // val t3 = System.nanoTime()
+      // logInfo("For task:" + taskId + "shell script took: " + (t1-t0)/1000000 + " ms")
+      // logInfo("For task:" + taskId + "function getCoreNumber took:" + (t3-t2)/1000000 + " ms")
+
+      // SCENARIO 4
+      // Here we maintain a map of stageId to map of tasks to cores
+      // the first time a task of next stage comes we try to schedule it on the same core as the one
+      // which the last task of the previous staeg ran on
+      // Unfortunately due to the parallel nature of threads we were not able to get desired speedup
+      // due to all parallel tasks getting pinned to the same core
+      // this.synchronized
+      // {
+        val keys = stageIdToTaskCoreMap.keys
+        if(keys.size > 0)// why >0? because the first time it can run on any core
+        // it is only from the second time that we want to run it on the same core
+        {
+          // need to get the largest element
+          if (stageId > keys.max)
+            // this means that a new stage has come
+          {
+            val mostRecentlyRunStageId = keys.max
+            logInfo(s"stage: $stageId and previously run stage id was $mostRecentlyRunStageId")
+            // now we find the last task of the prevstage and execute this new task
+            // of new stage on that same core
+            // get the hashmap of tasks to cores
+            val bunchOfTasksOfPreviousStage = stageIdToTaskCoreMap(mostRecentlyRunStageId)
+            // get the bunch of tasks and get the max task of that
+            val lastTaskRunOfPreviousStage = bunchOfTasksOfPreviousStage.keys.max
+            // get the core in which that task was executed
+            val coreOfLastTaskRunOfPreviousStage =
+              bunchOfTasksOfPreviousStage(lastTaskRunOfPreviousStage)
+            // now make this task to run on this core only
+            logInfo(s"""task: $lastTaskRunOfPreviousStage of previous stage
+             ran on core $coreOfLastTaskRunOfPreviousStage""")
+            pinToSameCore(coreOfLastTaskRunOfPreviousStage, taskId)
+            // logInfo(s"""task $taskId will NOT pinned to $coreOfLastTaskRunOfPreviousStage""")
+            // pinToAlternativeCore(coreOfLastTaskRunOfPreviousStage, taskId)
+          }
+        }
+        stageIdToTaskCoreMap += (stageId -> scala.collection.mutable.HashMap
+          (taskId -> getCoreNumber(taskId)))
+      // }
       execBackend.statusUpdate(taskId, TaskState.RUNNING, EMPTY_BYTE_BUFFER)
       var taskStart: Long = 0
       var taskStartCpu: Long = 0
